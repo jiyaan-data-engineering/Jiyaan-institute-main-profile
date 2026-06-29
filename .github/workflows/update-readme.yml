@@ -1,0 +1,72 @@
+name: Update README with latest content
+
+on:
+  schedule:
+    # Runs every day at 00:30 UTC (06:00 IST)
+    - cron: "30 0 * * *"
+  workflow_dispatch: # allows manual trigger from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  update-readme:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # Renders latest YouTube videos as thumbnail cards in the YOUTUBE-CARDS block
+      - name: Update with latest YouTube video cards
+        uses: DenverCoder1/github-readme-youtube-cards@main
+        with:
+          channel_id: UCMNZFAhQSB314E_MG3IbTXQ
+          max_videos: 6
+          card_width: 250
+          background_color: "#0A1F44"
+          title_color: "#F2F3F8"
+          stats_color: "#94A3B8"
+
+      # Renders latest Medium posts as thumbnail cards in the BLOG-CARDS block
+      - name: Update with latest Medium post cards
+        run: |
+          python3 - <<'PYEOF'
+          import re, urllib.request, xml.etree.ElementTree as ET, email.utils, pathlib
+
+          FEED = "https://medium.com/feed/@vishalbulbule"
+          req = urllib.request.Request(FEED, headers={"User-Agent": "Mozilla/5.0"})
+          root = ET.fromstring(urllib.request.urlopen(req, timeout=30).read())
+          ns = {"content": "http://purl.org/rss/1.0/modules/content/"}
+
+          cards = []
+          for it in root.findall("./channel/item")[:6]:
+              title = (it.findtext("title") or "").strip().replace("&", "&amp;").replace("<", "&lt;")
+              link = (it.findtext("link") or "").split("?")[0]
+              pub = it.findtext("pubDate") or ""
+              date = email.utils.parsedate_to_datetime(pub).strftime("%b %d, %Y") if pub else ""
+              content = it.findtext("content:encoded", default="", namespaces=ns) or ""
+              m = re.search(r'<img[^>]+src="([^"]+)"', content)
+              cell = f'<a href="{link}">'
+              if m:
+                  cell += f'<img src="{m.group(1)}" width="250" alt=""/><br/>'
+              cell += f'<b>{title}</b></a><br/><sub>{date}</sub>'
+              cards.append(f'<td align="center" valign="top" width="33%">{cell}</td>')
+
+          rows = ["<tr>" + "".join(cards[i:i+3]) + "</tr>" for i in range(0, len(cards), 3)]
+          table = "<table>" + "".join(rows) + "</table>"
+
+          readme = pathlib.Path("README.md")
+          text = readme.read_text()
+          new = re.sub(r"(<!-- BLOG-CARDS:START -->).*?(<!-- BLOG-CARDS:END -->)",
+                       lambda mt: mt.group(1) + "\n" + table + "\n" + mt.group(2),
+                       text, flags=re.S)
+          readme.write_text(new)
+          PYEOF
+
+      - name: Commit blog cards
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git diff --staged --quiet || git commit -m "Update latest blog cards"
+          git push
